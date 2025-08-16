@@ -11,6 +11,7 @@ router.use(authMiddleware.protect);
 
 router.post('/', agencyController.createAgency);
 router.get('/', agencyController.getAllAgencies);
+router.get('/search', agencyController.searchByDestination);
 router.get('/:id', agencyController.getAgency);
 router.patch('/:id', agencyController.updateAgency);
 router.delete('/:id', agencyController.deleteAgency);
