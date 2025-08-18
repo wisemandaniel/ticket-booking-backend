@@ -19,7 +19,8 @@ exports.updateProfile = catchAsync(async (req, res, next) => {
     fullName: req.body.fullName,
     email: req.body.email,
     phoneNumber: req.body.phoneNumber,
-    address: req.body.address
+    address: req.body.address,
+    idCardNumber: req.body.idCardNumber
   };
 
   // 2) Update user document

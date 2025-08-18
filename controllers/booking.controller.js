@@ -1,159 +1,119 @@
 const Booking = require('../models/Booking');
-const catchAsync = require('../utils/catchAsync');
-const AppError = require('../utils/appError');
 
-exports.createBooking = catchAsync(async (req, res, next) => {
-  const { agency, seats, travelDate } = req.body;
-
-  // Validate required fields
-  if (!agency || !seats || !travelDate) {
-    return next(new AppError('Agency, seats, and travel date are required', 400));
+// Create a new booking
+exports.createBooking = async (req, res) => {
+  try {
+    const booking = new Booking(req.body);
+    await booking.save();
+    
+    res.status(201).json({
+      success: true,
+      booking,
+      paymentRequired: booking.paymentMethod === 'momo'
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false,
+      error: error.message 
+    });
   }
-
-  // Convert and validate seat numbers
-  const validatedSeats = seats.map(seat => {
-    const seatNumber = Number(seat.seatNumber);
-    if (isNaN(seatNumber)) {
-      throw new AppError(`Invalid seat number: ${seat.seatNumber}`, 400);
-    }
-    return {
-      ...seat,
-      seatNumber
-    };
-  });
-
-  // Check for duplicates in current request
-  const seatNumbers = validatedSeats.map(s => s.seatNumber);
-  if (new Set(seatNumbers).size !== seatNumbers.length) {
-    return next(new AppError('Duplicate seat numbers in request', 400));
-  }
-
-  // Check for existing bookings
-  const existingBookings = await Booking.find({
-    'agency.name': agency.name,
-    'agency.busNumber': agency.busNumber,
-    travelDate,
-    'seats.seatNumber': { $in: seatNumbers },
-    status: { $ne: 'cancelled' }
-  });
-
-  if (existingBookings.length > 0) {
-    const bookedSeats = existingBookings.flatMap(b => b.seats.map(s => s.seatNumber));
-    const conflicts = seatNumbers.filter(num => bookedSeats.includes(num));
-    return next(new AppError(
-      `Seat(s) ${conflicts.join(', ')} already booked on ${agency.busNumber}`,
-      400
-    ));
-  }
-
-  // Create booking
-  const booking = await Booking.create({
-    ...req.body,
-    user: req.user.id,
-    seats: validatedSeats,
-    bookingReference: generateBookingReference(),
-    status: 'confirmed'
-  });
-
-  res.status(201).json({
-    status: 'success',
-    data: { booking }
-  });
-});
-
-// Helper function
-function generateBookingReference() {
-  return `B-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
-}
-
-// Unified query method for all booking listings
-const queryBookings = async (userId, filters, projection, sort) => {
-  return await Booking.find({ 
-    user: userId,
-    ...filters
-  })
-  .select(projection)
-  .sort(sort);
 };
 
-exports.getUserBookings = catchAsync(async (req, res, next) => {
-  const bookings = await queryBookings(
-    req.user.id,
-    {},
-    '-__v',
-    '-createdAt'
-  );
-  
-  res.status(200).json({
-    status: 'success',
-    results: bookings.length,
-    data: { bookings }
-  });
-});
+// Get user booking statistics
+exports.getUserStats = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const now = new Date();
 
-exports.getUserTravelHistory = catchAsync(async (req, res, next) => {
-  const history = await queryBookings(
-    req.user.id,
-    { status: { $in: ['completed', 'cancelled'] } },
-    'agency kickoffLocation destination createdAt seats status payment.status',
-    '-createdAt'
-  );
-  
-  res.status(200).json({
-    status: 'success',
-    results: history.length,
-    data: { history }
-  });
-});
+    const [totalBookings, pastTrips, upcomingTrips] = await Promise.all([
+      Booking.countDocuments({ user: userId, status: 'confirmed' }),
+      Booking.countDocuments({ 
+        user: userId, 
+        status: 'completed',
+        travelDate: { $lt: now }
+      }),
+      Booking.countDocuments({ 
+        user: userId, 
+        status: 'confirmed',
+        travelDate: { $gte: now }
+      })
+    ]);
 
-exports.getUpcomingBookings = catchAsync(async (req, res, next) => {
-  const bookings = await queryBookings(
-    req.user._id,
-    { 
+    res.status(200).json({
+      success: true,
+      stats: { totalBookings, pastTrips, upcomingTrips }
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+};
+
+// Get user travel history
+exports.getTravelHistory = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const now = new Date();
+
+    const history = await Booking.find({
+      user: userId,
+      status: { $in: ['completed', 'confirmed'] },
+      travelDate: { $lt: now }
+    })
+    .sort('-travelDate')
+    .select('agency kickoff_location destination seats totalAmount travelDate status');
+
+    res.status(200).json({
+      success: true,
+      history: history.map(booking => ({
+        id: booking._id,
+        agency: booking.agency,
+        route: booking.route, // Using virtual
+        seats: booking.seats.length,
+        totalAmount: booking.totalAmount,
+        date: booking.travelDate,
+        status: booking.status
+      }))
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+};
+
+// Get upcoming trips
+exports.getUpcomingTrips = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const now = new Date();
+
+    const upcoming = await Booking.find({
+      user: userId,
       status: 'confirmed',
-      createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
-    },
-    'agency kickoffLocation destination createdAt seats status',
-    'createdAt'
-  );
-  
-  res.status(200).json({
-    status: 'success',
-    results: bookings.length,
-    data: { bookings }
-  });
-});
+      travelDate: { $gte: now }
+    })
+    .sort('travelDate')
+    .select('agency kickoff_location destination seats totalAmount travelDate');
 
-exports.getUpcomingTrips = catchAsync(async (req, res, next) => {
-  console.log('user ID', req.user._id);
-  
-  const trips = await Booking.find({
-    user: req.user._id,
-    status: 'confirmed',
-    travelDate: { $gte: new Date() } // Changed from createdAt
-  }).sort('travelDate');
-  
-  res.status(200).json({
-    status: 'success',
-    results: trips.length,
-    data: { trips }
-  });
-});
-
-exports.getPastTrips = catchAsync(async (req, res, next) => {
-  const trips = await queryBookings(
-    req.user.id,
-    { 
-      status: 'completed',
-      travelDate: { $lt: new Date() }
-    },
-    'agency kickoffLocation destination travelDate seats',
-    '-travelDate'
-  );
-  
-  res.status(200).json({
-    status: 'success',
-    results: trips.length,
-    data: { trips }
-  });
-});
+    res.status(200).json({
+      success: true,
+      upcoming: upcoming.map(trip => ({
+        id: trip._id,
+        agency: trip.agency,
+        route: trip.route,
+        seats: trip.seats.length,
+        totalAmount: trip.totalAmount,
+        date: trip.travelDate
+      }))
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+};
