@@ -20,18 +20,24 @@ exports.createBooking = async (req, res) => {
 };
 
 // Get user booking statistics
+// Get user booking statistics
 exports.getUserStats = async (req, res) => {
   try {
     const { userId } = req.params;
     const now = new Date();
 
     const [totalBookings, pastTrips, upcomingTrips] = await Promise.all([
-      Booking.countDocuments({ user: userId, status: 'confirmed' }),
+      // All bookings with any status
+      Booking.countDocuments({ user: userId }),
+      
+      // Past trips: status confirmed AND travelDate less than current date
       Booking.countDocuments({ 
         user: userId, 
-        status: 'completed',
+        status: 'confirmed',
         travelDate: { $lt: now }
       }),
+      
+      // Upcoming trips: status confirmed AND travelDate greater than or equal to current date
       Booking.countDocuments({ 
         user: userId, 
         status: 'confirmed',
@@ -41,7 +47,11 @@ exports.getUserStats = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      stats: { totalBookings, pastTrips, upcomingTrips }
+      stats: { 
+        totalBookings, 
+        pastTrips, 
+        upcomingTrips 
+      }
     });
   } catch (error) {
     res.status(400).json({ 

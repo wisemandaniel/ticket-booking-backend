@@ -6,6 +6,17 @@ const bookingSchema = new mongoose.Schema({
     ref: 'User', 
     required: true 
   },
+  bookingReference: {
+    type: String,
+    unique: true,
+    required: true,
+    default: function() {
+      const timestamp = Date.now().toString(36);
+      const randomStr = Math.random().toString(36).substring(2, 6);
+      const agencyInitials = this.agency ? this.agency.substring(0, 3).toUpperCase() : 'BUS';
+      return `${agencyInitials}-${timestamp}-${randomStr}`;
+    }
+  },
   agency: { type: String, required: true },
   kickoff_location: { type: String, required: true },
   destination: { type: String, required: true },
